@@ -888,58 +888,65 @@ fn build_replacement_text(original: &str, new_version: &str) -> String {
 ### 11.1 In-Memory Cache
 
 ```rust
-// CacheKey format: "{provider}:{package_name}:{show_prereleases}"
+// CacheKey format: "{provider}:{package_name}"
 pub type CacheKey = String;
 
 pub struct VersionCache {
-    store: tokio::sync::RwLock<HashMap<CacheKey, CacheEntry>>,
+    store:    tokio::sync::RwLock<HashMap<CacheKey, CacheEntry>>,
+    inflight: tokio::sync::Mutex<HashMap<CacheKey, tokio::sync::broadcast::Sender<VersionResult>>>,
+    ttl:      Duration,
 }
 
 impl VersionCache {
+    pub fn new(ttl: Duration) -> Self { ... }
     pub async fn get(&self, key: &str) -> Option<VersionResult> { ... }
-    pub async fn set(&self, key: CacheKey, result: VersionResult, ttl: Duration) { ... }
+    pub async fn set(&self, key: CacheKey, result: VersionResult) { ... }
     pub async fn invalidate(&self, key: &str) { ... }
 }
 ```
 
-- TTL: **5 minutes** per entry (configurable).  
-- Cache is in-process; it is discarded when the LSP server exits (when Zed closes).  
+- TTL: **5 minutes** per entry (configurable via `Settings::cache_ttl_secs`; passed to `VersionCache::new`).
+- Cache is in-process; it is discarded when the LSP server exits (when Zed closes).
 - There is no disk persistence. Re-fetches happen on next server start.
 
 ### 11.2 Fetch Deduplication
 
-Multiple concurrent requests for the same package are deduplicated via a pending-promise map:
+Multiple concurrent requests for the same package are deduplicated via an inflight broadcast-channel map. All fetch sites in the backend call `cache.resolve(...)` instead of the raw `cache.get + cache.set` pair:
 
 ```rust
-// Inflight deduplication via broadcast channel
-inflight: tokio::sync::Mutex<HashMap<CacheKey, tokio::sync::broadcast::Sender<VersionResult>>>,
-
 pub async fn resolve<F, Fut>(&self, key: &str, fetcher: F) -> VersionResult
 where
-    F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = VersionResult>,
+    F: FnOnce() -> Fut + Send,
+    Fut: std::future::Future<Output = VersionResult> + Send,
 {
     if let Some(cached) = self.get(key).await { return cached; }
-    let mut inflight = self.inflight.lock().await;
-    if let Some(tx) = inflight.get(key) {
-        let mut rx = tx.subscribe();
-        drop(inflight);
-        return rx.recv().await.unwrap_or_default();
+    // Check for inflight request by another task
+    {
+        let inflight = self.inflight.lock().await;
+        if let Some(tx) = inflight.get(key) {
+            let mut rx = tx.subscribe();
+            drop(inflight);
+            if let Ok(result) = rx.recv().await { return result; }
+            // Sender dropped — fall through to fetch
+        }
     }
     let (tx, _) = tokio::sync::broadcast::channel(1);
-    inflight.insert(key.to_string(), tx.clone());
-    drop(inflight);
+    self.inflight.lock().await.insert(key.to_string(), tx.clone());
     let result = fetcher().await;
-    self.set(key.to_string(), result.clone(), Duration::from_secs(300)).await;
-    tx.send(result.clone()).ok();
+    self.set(key.to_string(), result.clone()).await;
+    let _ = tx.send(result.clone());
     self.inflight.lock().await.remove(key);
     result
 }
 ```
 
-### 11.3 Lazy Fetching
+The `Send` bounds on `F` and `Fut` are required because `resolve` is used both inside `tokio::spawn` tasks and inside `async_trait` methods (which are `Send`).
 
-Registry requests are only made when the editor requests inlay hints (`textDocument/inlayHint`). If the user hides hints via Zed's `editor: toggle inlay hints`, Zed stops sending hint requests and no registry calls are made.
+### 11.3 Lazy / Proactive Fetching
+
+- **Proactive prefetch** (`did_open`): when a manifest is opened, versions for all parsed dependencies are fetched in a background task via `cache.resolve()`. After they land, a `textDocument/inlayHint` refresh is requested so Zed re-renders hints with real data.
+- **On-demand fetch** (`inlayHint`): dependencies not yet in cache are rendered as `… fetching` and a background task resolves them via `cache.resolve()`, triggering a refresh on completion.
+- **Code actions** (`codeAction`): `resolve_dependencies()` calls `cache.resolve()` directly (blocking the response until all versions are available), so actions are always based on up-to-date data.
 
 ---
 

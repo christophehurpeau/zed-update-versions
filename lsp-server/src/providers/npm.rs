@@ -221,9 +221,7 @@ fn is_unsupported_specifier(value: &str) -> bool {
         "http:",
         "https://",
     ];
-    prefixes.iter().any(|p| value.starts_with(p))
-        || value == "*"
-        || value == "latest"
+    prefixes.iter().any(|p| value.starts_with(p)) || value == "*" || value == "latest"
 }
 
 /// Parse an `npm:` alias value into `(package_name, version_constraint)`.
@@ -372,7 +370,9 @@ mod tests {
 
         assert_eq!(deps.len(), 2);
 
-        let alias = deps.iter().find(|d| d.name == "react" && d.version_constraint == "^19.0.0");
+        let alias = deps
+            .iter()
+            .find(|d| d.name == "react" && d.version_constraint == "^19.0.0");
         let alias = alias.expect("npm alias dependency should be parsed");
         // Range should point to the version part, not the full value
         assert_eq!(alias.version_range.start.line, 2);
@@ -383,7 +383,9 @@ mod tests {
             "^19.0.0".len()
         );
 
-        let plain = deps.iter().find(|d| d.name == "react" && d.version_constraint == "^18.2.0");
+        let plain = deps
+            .iter()
+            .find(|d| d.name == "react" && d.version_constraint == "^18.2.0");
         assert!(plain.is_some(), "plain react dep should still be parsed");
     }
 

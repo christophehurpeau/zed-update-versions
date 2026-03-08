@@ -16,7 +16,6 @@ struct CacheEntry {
 }
 
 /// In-memory cache with TTL and inflight deduplication.
-#[allow(dead_code)]
 pub struct VersionCache {
     store: RwLock<HashMap<String, CacheEntry>>,
     inflight: Mutex<HashMap<String, broadcast::Sender<VersionResult>>>,
@@ -63,11 +62,10 @@ impl VersionCache {
     /// Resolve a version, using cache and inflight deduplication.
     /// If the value is cached, return it. If an inflight request exists, wait for it.
     /// Otherwise, call the fetcher and cache the result.
-    #[allow(dead_code)]
     pub async fn resolve<F, Fut>(&self, key: &str, fetcher: F) -> VersionResult
     where
-        F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = VersionResult>,
+        F: FnOnce() -> Fut + Send,
+        Fut: std::future::Future<Output = VersionResult> + Send,
     {
         // Check cache first
         if let Some(cached) = self.get(key).await {
@@ -174,6 +172,84 @@ mod tests {
 
         cache.invalidate("npm:react").await;
         assert!(cache.get("npm:react").await.is_none());
+    }
+
+    /// resolve() must return a cached entry without invoking the fetcher.
+    #[tokio::test]
+    async fn test_cache_resolve_returns_cached_without_fetching() {
+        let cache = VersionCache::new(Duration::from_secs(300));
+        cache
+            .set(
+                "npm:react".to_string(),
+                VersionResult {
+                    stable_versions: vec!["18.2.0".to_string()],
+                    prerelease: None,
+                },
+            )
+            .await;
+
+        let call_count = Arc::new(AtomicU32::new(0));
+        let count = call_count.clone();
+        let result = cache
+            .resolve("npm:react", || async move {
+                count.fetch_add(1, Ordering::Relaxed);
+                VersionResult {
+                    stable_versions: vec!["99.0.0".to_string()],
+                    prerelease: None,
+                }
+            })
+            .await;
+
+        assert_eq!(
+            call_count.load(Ordering::Relaxed),
+            0,
+            "fetcher must not be called on a cache hit"
+        );
+        assert_eq!(
+            result.stable_versions.first().map(String::as_str),
+            Some("18.2.0")
+        );
+    }
+
+    /// When an inflight sender is dropped before recv() returns (e.g. the first
+    /// task panicked), the waiting task must fall through and issue its own fetch.
+    #[tokio::test]
+    async fn test_cache_resolve_fallthrough_on_sender_drop() {
+        let cache = Arc::new(VersionCache::new(Duration::from_secs(300)));
+        let call_count = Arc::new(AtomicU32::new(0));
+
+        // Manually plant a dead broadcast channel (no receivers kept alive, tx
+        // dropped immediately after insert) to simulate the "sender gone" state.
+        {
+            let (tx, _rx) = broadcast::channel::<VersionResult>(1);
+            cache
+                .inflight
+                .lock()
+                .await
+                .insert("npm:lodash".to_string(), tx);
+            // tx is dropped here — any subsequent subscriber will get RecvError
+        }
+
+        let count = call_count.clone();
+        let result = cache
+            .resolve("npm:lodash", || async move {
+                count.fetch_add(1, Ordering::Relaxed);
+                VersionResult {
+                    stable_versions: vec!["4.17.21".to_string()],
+                    prerelease: None,
+                }
+            })
+            .await;
+
+        assert_eq!(
+            call_count.load(Ordering::Relaxed),
+            1,
+            "fetcher must be called when the in-flight sender is gone"
+        );
+        assert_eq!(
+            result.stable_versions.first().map(String::as_str),
+            Some("4.17.21")
+        );
     }
 
     #[tokio::test]

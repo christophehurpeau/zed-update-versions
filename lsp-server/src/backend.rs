@@ -66,16 +66,11 @@ impl Backend {
 
         for dep in parsed_deps {
             let cache_key = format!("{}:{}", provider_name, dep.name);
-
-            // Check cache first, then fetch via provider if needed
-            let version_result = match self.cache.get(&cache_key).await {
-                Some(cached) => cached,
-                None => {
-                    let result = provider.fetch_version(&dep.name).await;
-                    self.cache.set(cache_key, result.clone()).await;
-                    result
-                }
-            };
+            let dep_name = dep.name.clone();
+            let version_result = self
+                .cache
+                .resolve(&cache_key, || provider.fetch_version(&dep_name))
+                .await;
 
             let status = classify_dependency(&dep, &version_result);
             let prerelease = version_result.prerelease.clone();
@@ -306,8 +301,7 @@ impl LanguageServer for Backend {
                 tokio::spawn(async move {
                     for name in needs_fetch {
                         let key = format!("{}:{}", provider_name, name);
-                        let result = provider.fetch_version(&name).await;
-                        cache.set(key, result).await;
+                        cache.resolve(&key, || provider.fetch_version(&name)).await;
                     }
                     client
                         .send_request::<request::InlayHintRefreshRequest>(())
@@ -430,8 +424,9 @@ impl LanguageServer for Backend {
             tokio::spawn(async move {
                 for name in needs_fetch {
                     let cache_key = format!("{}:{}", provider_name, name);
-                    let result = provider.fetch_version(&name).await;
-                    cache.set(cache_key, result).await;
+                    cache
+                        .resolve(&cache_key, || provider.fetch_version(&name))
+                        .await;
                 }
                 client
                     .send_request::<request::InlayHintRefreshRequest>(())
