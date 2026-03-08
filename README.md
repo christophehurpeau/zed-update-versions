@@ -13,7 +13,7 @@ A [Zed](https://zed.dev) extension that shows the latest available version for e
 - **Code actions** — apply a version update with a single `Cmd+.` on the dependency line.
 - **Prerelease awareness** — optionally surface prerelease versions (alpha, beta, rc…).
 - **In-memory cache** — registry responses are cached with a configurable TTL to keep the editor snappy.
-- **Supported ecosystems** (v0.1): npm / Node.js (`package.json`), Rust / Cargo (`Cargo.toml`).
+- **Supported ecosystems** (v0.2): npm / Node.js (`package.json`), Rust / Cargo (`Cargo.toml`), Python / PyPI (`requirements.txt`, `pyproject.toml`).
 
 | State | Label |
 |-------|-------|
