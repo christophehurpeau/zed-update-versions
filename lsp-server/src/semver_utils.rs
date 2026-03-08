@@ -216,6 +216,15 @@ pub fn find_update_candidates(constraint: &str, versions: &[String]) -> Option<U
     })
 }
 
+/// Return the highest stable version from a list, or `None` if the list is empty.
+pub fn find_latest(versions: &[String]) -> Option<String> {
+    versions
+        .iter()
+        .filter_map(|v| Version::parse(v).ok().filter(|p| p.pre.is_empty()).map(|p| (v, p)))
+        .max_by(|(_, a), (_, b)| a.cmp(b))
+        .map(|(s, _)| s.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -384,6 +393,25 @@ mod tests {
     #[test]
     fn test_operator_bare() {
         assert_eq!(extract_operator("1.2.3"), "");
+    }
+
+    // --- find_latest tests ---
+
+    #[test]
+    fn test_find_latest_picks_highest() {
+        let versions = vec!["1.0.0".to_string(), "2.0.0".to_string(), "1.5.0".to_string()];
+        assert_eq!(find_latest(&versions), Some("2.0.0".to_string()));
+    }
+
+    #[test]
+    fn test_find_latest_ignores_prerelease() {
+        let versions = vec!["1.0.0".to_string(), "2.0.0-alpha.1".to_string()];
+        assert_eq!(find_latest(&versions), Some("1.0.0".to_string()));
+    }
+
+    #[test]
+    fn test_find_latest_empty() {
+        assert_eq!(find_latest(&[]), None);
     }
 
     // --- find_update_candidates tests ---

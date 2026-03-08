@@ -98,24 +98,35 @@ fn classify_dependency(dep: &ParsedDependency, result: &VersionResult) -> Depend
     }
 
     match semver_utils::find_update_candidates(&dep.version_constraint, &result.stable_versions) {
-        Some(candidates) => {
-            if candidates.patch.is_none()
-                && candidates.minor.is_none()
-                && candidates.major.is_none()
-            {
-                DependencyStatus::UpToDate {
-                    version: candidates
-                        .in_range
-                        .unwrap_or_else(|| result.stable_versions[0].clone()),
+        Some(candidates) => match candidates.in_range {
+            Some(in_range_version) => {
+                if candidates.patch.is_none()
+                    && candidates.minor.is_none()
+                    && candidates.major.is_none()
+                {
+                    DependencyStatus::UpToDate {
+                        version: in_range_version,
+                    }
+                } else {
+                    DependencyStatus::UpdateAvailable {
+                        patch: candidates.patch,
+                        minor: candidates.minor,
+                        major: candidates.major,
+                    }
                 }
-            } else {
-                DependencyStatus::UpdateAvailable {
+            }
+            None => {
+                // latest = highest available stable version regardless of constraint direction
+                let latest = semver_utils::find_latest(&result.stable_versions)
+                    .unwrap_or_else(|| result.stable_versions[0].clone());
+                DependencyStatus::VersionNotFound {
+                    latest,
                     patch: candidates.patch,
                     minor: candidates.minor,
                     major: candidates.major,
                 }
             }
-        }
+        },
         None => DependencyStatus::Unsupported,
     }
 }
@@ -137,9 +148,20 @@ fn hint_label(status: &DependencyStatus) -> String {
             } else if let Some(v) = patch.as_deref() {
                 (v, "patch")
             } else {
-                return "✔ latest".to_string();
+                unreachable!("UpdateAvailable with no candidates");
             };
             format!("↑ {} ({})", version, kind_str)
+        }
+        DependencyStatus::VersionNotFound { major, minor, patch, latest } => {
+            if let Some(v) = major.as_deref() {
+                format!("✘ not found, ↑ {} (major)", v)
+            } else if let Some(v) = minor.as_deref() {
+                format!("✘ not found, ↑ {} (minor)", v)
+            } else if let Some(v) = patch.as_deref() {
+                format!("✘ not found, ↑ {} (patch)", v)
+            } else {
+                format!("✘ not found, ↑ {} (latest)", latest)
+            }
         }
         DependencyStatus::NotFound => "✘ not found".to_string(),
         DependencyStatus::Unsupported => "⊘ unsupported".to_string(),
@@ -171,6 +193,26 @@ fn hint_tooltip(dep: &ResolvedDependency) -> String {
                 if semver_utils::is_prerelease_constraint(&dep.parsed.version_constraint) {
                     lines.push(format!("Prerelease: {}", pre));
                 }
+            }
+            lines.join("\n")
+        }
+        DependencyStatus::VersionNotFound { patch, minor, major, latest } => {
+            let has_candidates = major.is_some() || minor.is_some() || patch.is_some();
+            let mut lines = vec![format!(
+                "Version '{}' not found in registry",
+                dep.parsed.version_constraint
+            )];
+            if let Some(v) = major {
+                lines.push(format!("Major: ↑ {}", v));
+            }
+            if let Some(v) = minor {
+                lines.push(format!("Minor: ↑ {}", v));
+            }
+            if let Some(v) = patch {
+                lines.push(format!("Patch: ↑ {}", v));
+            }
+            if !has_candidates {
+                lines.push(format!("Latest: {}", latest));
             }
             lines.join("\n")
         }
@@ -412,19 +454,25 @@ impl LanguageServer for Backend {
         let actions: Vec<CodeActionOrCommand> = resolved
             .iter()
             .filter(|dep| dep.parsed.version_range.start.line == cursor_line)
-            .filter_map(|dep| match &dep.status {
-                DependencyStatus::UpdateAvailable {
-                    patch,
-                    minor,
-                    major,
-                } => {
-                    let mut actions = Vec::new();
+            .filter_map(|dep| {
+                // Extract candidates and an optional "latest" fallback (VersionNotFound only).
+                let (patch, minor, major, latest_fallback) = match &dep.status {
+                    DependencyStatus::UpdateAvailable { patch, minor, major } => {
+                        (patch, minor, major, None)
+                    }
+                    DependencyStatus::VersionNotFound { patch, minor, major, latest } => {
+                        (patch, minor, major, Some(latest.as_str()))
+                    }
+                    _ => return None,
+                };
 
-                    for (candidate, kind_str, is_preferred) in [
-                        (patch, "patch", true),
-                        (minor, "minor", false),
-                        (major, "major", false),
-                    ] {
+                let mut actions = Vec::new();
+
+                for (candidate, kind_str, is_preferred) in [
+                    (patch, "patch", true),
+                    (minor, "minor", false),
+                    (major, "major", false),
+                ] {
                         if let Some(version) = candidate {
                             let new_text = semver_utils::build_replacement_text(
                                 &dep.parsed.version_constraint,
@@ -453,8 +501,38 @@ impl LanguageServer for Backend {
                         }
                     }
 
-                    // Add prerelease action if available, newer than current, and not disabled
-                    if let Some(pre) = &dep.prerelease {
+                // For VersionNotFound with no higher candidates, offer a "set to latest" action.
+                if let Some(latest) = latest_fallback {
+                    if patch.is_none() && minor.is_none() && major.is_none() {
+                        let new_text = semver_utils::build_replacement_text(
+                            &dep.parsed.version_constraint,
+                            latest,
+                        );
+                        let edit = WorkspaceEdit {
+                            changes: Some(HashMap::from([(
+                                uri.clone(),
+                                vec![TextEdit {
+                                    range: dep.parsed.version_range,
+                                    new_text,
+                                }],
+                            )])),
+                            ..Default::default()
+                        };
+                        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                            title: format!(
+                                "Update {} to {} (latest)",
+                                dep.parsed.name, latest
+                            ),
+                            kind: Some(CodeActionKind::QUICKFIX),
+                            edit: Some(edit),
+                            is_preferred: Some(true),
+                            ..Default::default()
+                        }));
+                    }
+                }
+
+                // Add prerelease action if available, newer than current, and not disabled
+                if let Some(pre) = &dep.prerelease {
                         let current_is_prerelease =
                             semver_utils::is_prerelease_constraint(&dep.parsed.version_constraint);
                         let pre_is_newer = semver_utils::prerelease_newer_than_constraint(
@@ -489,13 +567,11 @@ impl LanguageServer for Backend {
                         }
                     }
 
-                    if actions.is_empty() {
-                        None
-                    } else {
-                        Some(actions)
-                    }
+                if actions.is_empty() {
+                    None
+                } else {
+                    Some(actions)
                 }
-                _ => None,
             })
             .flatten()
             .collect();
@@ -547,6 +623,29 @@ mod tests {
     }
 
     #[test]
+    fn test_hint_label_version_not_found_with_candidate() {
+        let status = DependencyStatus::VersionNotFound {
+            latest: "2.0.0".to_string(),
+            patch: None,
+            minor: None,
+            major: Some("2.0.0".to_string()),
+        };
+        assert_eq!(hint_label(&status), "✘ not found, ↑ 2.0.0 (major)");
+    }
+
+    #[test]
+    fn test_hint_label_version_not_found_no_candidate() {
+        // No higher candidate — falls back to showing latest.
+        let status = DependencyStatus::VersionNotFound {
+            latest: "1.0.0".to_string(),
+            patch: None,
+            minor: None,
+            major: None,
+        };
+        assert_eq!(hint_label(&status), "✘ not found, ↑ 1.0.0 (latest)");
+    }
+
+    #[test]
     fn test_hint_label_not_found() {
         assert_eq!(hint_label(&DependencyStatus::NotFound), "✘ not found");
     }
@@ -581,17 +680,18 @@ mod tests {
 
     #[test]
     fn test_classify_dependency_major_update() {
+        // ^1.0.0 is satisfied by 1.0.0 (in_range = Some), so 2.0.0 shows as UpdateAvailable.
         let dep = ParsedDependency {
             name: "react".to_string(),
-            version_constraint: "^18.2.0".to_string(),
+            version_constraint: "^1.0.0".to_string(),
             version_range: Range::default(),
         };
         let result = VersionResult {
-            stable_versions: vec!["19.0.0".to_string()],
+            stable_versions: vec!["1.0.0".to_string(), "2.0.0".to_string()],
             prerelease: None,
         };
         match classify_dependency(&dep, &result) {
-            DependencyStatus::UpdateAvailable { major: Some(_), .. } => {}
+            DependencyStatus::UpdateAvailable { major: Some(_), minor: None, patch: None } => {}
             other => panic!("Expected Major update, got {:?}", other),
         }
     }
@@ -615,6 +715,29 @@ mod tests {
 
     #[test]
     fn test_classify_dependency_patch_update() {
+        // ~1.0.0 (>=1.0.0, <1.1.0) is satisfied by 1.0.5, so it shows as UpdateAvailable.
+        let dep = ParsedDependency {
+            name: "serde".to_string(),
+            version_constraint: "~1.0.0".to_string(),
+            version_range: Range::default(),
+        };
+        let result = VersionResult {
+            stable_versions: vec!["1.0.0".to_string(), "1.0.5".to_string()],
+            prerelease: None,
+        };
+        match classify_dependency(&dep, &result) {
+            DependencyStatus::UpdateAvailable {
+                patch: Some(_),
+                minor: None,
+                major: None,
+            } => {}
+            other => panic!("Expected patch update, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_classify_dependency_version_not_found_with_higher() {
+        // =1.0.0 pins an exact version that doesn't exist; a higher version is available.
         let dep = ParsedDependency {
             name: "serde".to_string(),
             version_constraint: "=1.0.0".to_string(),
@@ -625,12 +748,36 @@ mod tests {
             prerelease: None,
         };
         match classify_dependency(&dep, &result) {
-            DependencyStatus::UpdateAvailable {
+            DependencyStatus::VersionNotFound {
+                latest,
                 patch: Some(_),
                 minor: None,
                 major: None,
-            } => {}
-            other => panic!("Expected patch update, got {:?}", other),
+            } => assert_eq!(latest, "1.0.5"),
+            other => panic!("Expected VersionNotFound with patch candidate, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_classify_dependency_version_not_found_no_candidates() {
+        // Pinned above all available versions — latest is still offered as fallback.
+        let dep = ParsedDependency {
+            name: "pkg".to_string(),
+            version_constraint: "=99.0.0".to_string(),
+            version_range: Range::default(),
+        };
+        let result = VersionResult {
+            stable_versions: vec!["1.0.0".to_string()],
+            prerelease: None,
+        };
+        match classify_dependency(&dep, &result) {
+            DependencyStatus::VersionNotFound {
+                latest,
+                patch: None,
+                minor: None,
+                major: None,
+            } => assert_eq!(latest, "1.0.0"),
+            other => panic!("Expected VersionNotFound with no candidates, got {:?}", other),
         }
     }
 

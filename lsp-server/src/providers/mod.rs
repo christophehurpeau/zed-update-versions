@@ -33,6 +33,16 @@ pub enum DependencyStatus {
         minor: Option<String>,
         major: Option<String>,
     },
+    /// The version constraint matched no available version in the registry.
+    /// `latest` is the highest stable version available; patch/minor/major are
+    /// candidates strictly higher than the constraint's base version (if any).
+    VersionNotFound {
+        /// The overall highest stable version in the registry.
+        latest: String,
+        patch: Option<String>,
+        minor: Option<String>,
+        major: Option<String>,
+    },
     /// Package was not found in the registry.
     NotFound,
     /// The version constraint syntax is not supported (e.g. git URLs).

@@ -44,11 +44,11 @@ Each package line is annotated with one of the following states:
 
 | State | Meaning | Example label |
 |-------|---------|---------------|
-| **Up to date** | The declared version satisfies the latest release | `✔ 4.2.1` |
+| **Up to date** | The declared version satisfies the latest release | `✔ latest` |
 | **Patch update available** | A newer patch version exists (e.g. bug fixes) | `↑ 4.2.3` |
 | **Minor update available** | A newer minor version exists (new features, backwards-compatible) | `↑ 4.3.0` |
 | **Major update available** | A newer major version exists (potentially breaking changes) | `↑ 5.0.0` |
-| **Version not found** | The declared version constraint does not match any version in the registry; higher versions may still be available as code-action suggestions | `✘ not found` |
+| **Version not found** | The declared version constraint does not match any version in the registry. The best higher candidate is shown when available; otherwise the overall latest is always shown as fallback | `✘ not found, ↑ 2.0.0 (major)` / `✘ not found, ↑ 1.0.0 (latest)` |
 | **Not found** | Package could not be found in the registry | `✘ Not found` |
 | **Unsupported** | Version constraint syntax is not recognised (e.g. git URLs) | `⊘ Unsupported` |
 | **Loading** | Fetch in progress | `… fetching` |

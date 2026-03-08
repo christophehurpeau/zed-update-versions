@@ -450,7 +450,7 @@ Label text mapping:
 | Patch update | `↑ {version}` |
 | Minor update | `↑ {version}` |
 | Major update | `↑ {version}` |
-| Version not found | `✘ not found` (tooltip lists available higher versions as candidates) |
+| Version not found | `✘ not found, ↑ {version} ({kind})` when a higher version exists (major/minor/patch); `✘ not found, ↑ {latest} (latest)` otherwise — latest is always available |
 | Not found | `✘ not found` |
 | Unsupported syntax | `⊘ unsupported` |
 | Loading | `… fetching` (optimistic; replaced on resolution) |
