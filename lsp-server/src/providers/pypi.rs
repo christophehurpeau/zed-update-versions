@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use tower_lsp::lsp_types::{Position, Range};
 use tracing::warn;
 
+use super::cargo::{extract_toml_version, find_toml_version_range};
 use crate::cache::VersionResult;
 use crate::providers::{ParsedDependency, Provider};
-use super::cargo::{extract_toml_version, find_toml_version_range};
 
 /// PyPI provider — resolves versions for `requirements.txt` and `pyproject.toml`.
 pub struct PypiProvider {
@@ -339,8 +339,7 @@ fn parse_req_line(line: &str) -> Option<(String, String, usize)> {
 /// Normalise a PyPI package name: lowercase and replace `-`/`.` with `_`.
 /// The PyPI API accepts both forms, but normalisation avoids duplicate cache keys.
 pub(crate) fn normalize_pypi_name(name: &str) -> String {
-    name.to_ascii_lowercase()
-        .replace(['-', '.'], "_")
+    name.to_ascii_lowercase().replace(['-', '.'], "_")
 }
 
 /// Return true if the string starts with a PEP 440 version specifier operator.
@@ -382,8 +381,7 @@ fn parse_pyproject_toml(content: &str) -> Vec<ParsedDependency> {
         for dep_val in project_deps {
             if let Some(dep_str) = dep_val.as_str() {
                 if let Some((name, constraint, offset)) = parse_req_line(dep_str) {
-                    if let Some(range) =
-                        find_pep621_dep_range(&lines, dep_str, &constraint, offset)
+                    if let Some(range) = find_pep621_dep_range(&lines, dep_str, &constraint, offset)
                     {
                         deps.push(ParsedDependency {
                             name,
@@ -410,12 +408,9 @@ fn parse_pyproject_toml(content: &str) -> Vec<ParsedDependency> {
             }
 
             if let Some(version_str) = extract_toml_version(value) {
-                if let Some(range) = find_toml_version_range(
-                    &lines,
-                    "tool.poetry.dependencies",
-                    name,
-                    &version_str,
-                ) {
+                if let Some(range) =
+                    find_toml_version_range(&lines, "tool.poetry.dependencies", name, &version_str)
+                {
                     deps.push(ParsedDependency {
                         name: normalize_pypi_name(name),
                         version_constraint: version_str,
@@ -588,7 +583,7 @@ mod tests {
         let content = "requests==2.28.0\n";
         let deps = parse_requirements_txt(content);
         assert_eq!(deps[0].version_range.start.character, 8); // after "requests"
-        assert_eq!(deps[0].version_range.end.character, 16);  // end of "==2.28.0"
+        assert_eq!(deps[0].version_range.end.character, 16); // end of "==2.28.0"
     }
 
     // --- parse_pyproject_toml (PEP 621) ---
@@ -623,7 +618,7 @@ flask = "^2.0.0"
 "#;
         let mut deps = parse_pyproject_toml(content);
         assert_eq!(deps.len(), 2); // python is skipped
-        // Sort by name so the assertion is order-independent (HashMap iteration is non-deterministic)
+                                   // Sort by name so the assertion is order-independent (HashMap iteration is non-deterministic)
         deps.sort_by(|a, b| a.name.cmp(&b.name));
         assert_eq!(deps[0].name, "flask");
         assert_eq!(deps[0].version_constraint, "^2.0.0");

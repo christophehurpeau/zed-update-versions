@@ -183,10 +183,8 @@ pub fn find_update_candidates(constraint: &str, versions: &[String]) -> Option<U
             _ => continue,
         };
 
-        if req.matches(&v) {
-            if in_range.as_ref().is_none_or(|best| v > *best) {
-                in_range = Some(v.clone());
-            }
+        if req.matches(&v) && in_range.as_ref().is_none_or(|best| v > *best) {
+            in_range = Some(v.clone());
         }
 
         if v > base {
@@ -220,7 +218,12 @@ pub fn find_update_candidates(constraint: &str, versions: &[String]) -> Option<U
 pub fn find_latest(versions: &[String]) -> Option<String> {
     versions
         .iter()
-        .filter_map(|v| Version::parse(v).ok().filter(|p| p.pre.is_empty()).map(|p| (v, p)))
+        .filter_map(|v| {
+            Version::parse(v)
+                .ok()
+                .filter(|p| p.pre.is_empty())
+                .map(|p| (v, p))
+        })
         .max_by(|(_, a), (_, b)| a.cmp(b))
         .map(|(s, _)| s.clone())
 }
@@ -399,7 +402,11 @@ mod tests {
 
     #[test]
     fn test_find_latest_picks_highest() {
-        let versions = vec!["1.0.0".to_string(), "2.0.0".to_string(), "1.5.0".to_string()];
+        let versions = vec![
+            "1.0.0".to_string(),
+            "2.0.0".to_string(),
+            "1.5.0".to_string(),
+        ];
         assert_eq!(find_latest(&versions), Some("2.0.0".to_string()));
     }
 

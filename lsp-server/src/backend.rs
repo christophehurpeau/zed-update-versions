@@ -152,7 +152,12 @@ fn hint_label(status: &DependencyStatus) -> String {
             };
             format!("↑ {} ({})", version, kind_str)
         }
-        DependencyStatus::VersionNotFound { major, minor, patch, latest } => {
+        DependencyStatus::VersionNotFound {
+            major,
+            minor,
+            patch,
+            latest,
+        } => {
             if let Some(v) = major.as_deref() {
                 format!("✘ not found, ↑ {} (major)", v)
             } else if let Some(v) = minor.as_deref() {
@@ -196,7 +201,12 @@ fn hint_tooltip(dep: &ResolvedDependency) -> String {
             }
             lines.join("\n")
         }
-        DependencyStatus::VersionNotFound { patch, minor, major, latest } => {
+        DependencyStatus::VersionNotFound {
+            patch,
+            minor,
+            major,
+            latest,
+        } => {
             let has_candidates = major.is_some() || minor.is_some() || patch.is_some();
             let mut lines = vec![format!(
                 "Version '{}' not found in registry",
@@ -457,12 +467,17 @@ impl LanguageServer for Backend {
             .filter_map(|dep| {
                 // Extract candidates and an optional "latest" fallback (VersionNotFound only).
                 let (patch, minor, major, latest_fallback) = match &dep.status {
-                    DependencyStatus::UpdateAvailable { patch, minor, major } => {
-                        (patch, minor, major, None)
-                    }
-                    DependencyStatus::VersionNotFound { patch, minor, major, latest } => {
-                        (patch, minor, major, Some(latest.as_str()))
-                    }
+                    DependencyStatus::UpdateAvailable {
+                        patch,
+                        minor,
+                        major,
+                    } => (patch, minor, major, None),
+                    DependencyStatus::VersionNotFound {
+                        patch,
+                        minor,
+                        major,
+                        latest,
+                    } => (patch, minor, major, Some(latest.as_str())),
                     _ => return None,
                 };
 
@@ -473,33 +488,33 @@ impl LanguageServer for Backend {
                     (minor, "minor", false),
                     (major, "major", false),
                 ] {
-                        if let Some(version) = candidate {
-                            let new_text = semver_utils::build_replacement_text(
-                                &dep.parsed.version_constraint,
-                                version,
-                            );
-                            let edit = WorkspaceEdit {
-                                changes: Some(HashMap::from([(
-                                    uri.clone(),
-                                    vec![TextEdit {
-                                        range: dep.parsed.version_range,
-                                        new_text,
-                                    }],
-                                )])),
-                                ..Default::default()
-                            };
-                            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                                title: format!(
-                                    "Update {} to {} ({})",
-                                    dep.parsed.name, version, kind_str
-                                ),
-                                kind: Some(CodeActionKind::QUICKFIX),
-                                edit: Some(edit),
-                                is_preferred: Some(is_preferred),
-                                ..Default::default()
-                            }));
-                        }
+                    if let Some(version) = candidate {
+                        let new_text = semver_utils::build_replacement_text(
+                            &dep.parsed.version_constraint,
+                            version,
+                        );
+                        let edit = WorkspaceEdit {
+                            changes: Some(HashMap::from([(
+                                uri.clone(),
+                                vec![TextEdit {
+                                    range: dep.parsed.version_range,
+                                    new_text,
+                                }],
+                            )])),
+                            ..Default::default()
+                        };
+                        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                            title: format!(
+                                "Update {} to {} ({})",
+                                dep.parsed.name, version, kind_str
+                            ),
+                            kind: Some(CodeActionKind::QUICKFIX),
+                            edit: Some(edit),
+                            is_preferred: Some(is_preferred),
+                            ..Default::default()
+                        }));
                     }
+                }
 
                 // For VersionNotFound with no higher candidates, offer a "set to latest" action.
                 if let Some(latest) = latest_fallback {
@@ -519,10 +534,7 @@ impl LanguageServer for Backend {
                             ..Default::default()
                         };
                         actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                            title: format!(
-                                "Update {} to {} (latest)",
-                                dep.parsed.name, latest
-                            ),
+                            title: format!("Update {} to {} (latest)", dep.parsed.name, latest),
                             kind: Some(CodeActionKind::QUICKFIX),
                             edit: Some(edit),
                             is_preferred: Some(true),
@@ -533,39 +545,36 @@ impl LanguageServer for Backend {
 
                 // Add prerelease action if available, newer than current, and not disabled
                 if let Some(pre) = &dep.prerelease {
-                        let current_is_prerelease =
-                            semver_utils::is_prerelease_constraint(&dep.parsed.version_constraint);
-                        let pre_is_newer = semver_utils::prerelease_newer_than_constraint(
+                    let current_is_prerelease =
+                        semver_utils::is_prerelease_constraint(&dep.parsed.version_constraint);
+                    let pre_is_newer = semver_utils::prerelease_newer_than_constraint(
+                        &dep.parsed.version_constraint,
+                        pre,
+                    );
+                    if pre_is_newer && (!hide_prereleases || current_is_prerelease) {
+                        let pre_text = semver_utils::build_replacement_text(
                             &dep.parsed.version_constraint,
                             pre,
                         );
-                        if pre_is_newer && (!hide_prereleases || current_is_prerelease) {
-                            let pre_text = semver_utils::build_replacement_text(
-                                &dep.parsed.version_constraint,
-                                pre,
-                            );
-                            let pre_edit = WorkspaceEdit {
-                                changes: Some(HashMap::from([(
-                                    uri.clone(),
-                                    vec![TextEdit {
-                                        range: dep.parsed.version_range,
-                                        new_text: pre_text,
-                                    }],
-                                )])),
-                                ..Default::default()
-                            };
-                            actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                                title: format!(
-                                    "Update {} to {} (prerelease)",
-                                    dep.parsed.name, pre
-                                ),
-                                kind: Some(CodeActionKind::QUICKFIX),
-                                edit: Some(pre_edit),
-                                is_preferred: Some(false),
-                                ..Default::default()
-                            }));
-                        }
+                        let pre_edit = WorkspaceEdit {
+                            changes: Some(HashMap::from([(
+                                uri.clone(),
+                                vec![TextEdit {
+                                    range: dep.parsed.version_range,
+                                    new_text: pre_text,
+                                }],
+                            )])),
+                            ..Default::default()
+                        };
+                        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                            title: format!("Update {} to {} (prerelease)", dep.parsed.name, pre),
+                            kind: Some(CodeActionKind::QUICKFIX),
+                            edit: Some(pre_edit),
+                            is_preferred: Some(false),
+                            ..Default::default()
+                        }));
                     }
+                }
 
                 if actions.is_empty() {
                     None
@@ -691,7 +700,11 @@ mod tests {
             prerelease: None,
         };
         match classify_dependency(&dep, &result) {
-            DependencyStatus::UpdateAvailable { major: Some(_), minor: None, patch: None } => {}
+            DependencyStatus::UpdateAvailable {
+                major: Some(_),
+                minor: None,
+                patch: None,
+            } => {}
             other => panic!("Expected Major update, got {:?}", other),
         }
     }
@@ -754,7 +767,10 @@ mod tests {
                 minor: None,
                 major: None,
             } => assert_eq!(latest, "1.0.5"),
-            other => panic!("Expected VersionNotFound with patch candidate, got {:?}", other),
+            other => panic!(
+                "Expected VersionNotFound with patch candidate, got {:?}",
+                other
+            ),
         }
     }
 
@@ -777,7 +793,10 @@ mod tests {
                 minor: None,
                 major: None,
             } => assert_eq!(latest, "1.0.0"),
-            other => panic!("Expected VersionNotFound with no candidates, got {:?}", other),
+            other => panic!(
+                "Expected VersionNotFound with no candidates, got {:?}",
+                other
+            ),
         }
     }
 
