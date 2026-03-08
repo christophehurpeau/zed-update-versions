@@ -12,8 +12,7 @@
 publish = false
 # Use git-cliff for changelog generation.
 changelog_config = "cliff.toml"
-# Single tag per release using the standard v* prefix.
-tag_name = "v{{ version }}"
+
 
 [[package]]
 name = "update-versions-lsp"
