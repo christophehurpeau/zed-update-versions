@@ -1,0 +1,24 @@
+id = "update-versions"
+name = "Update Versions"
+version = "0.1.0"
+schema_version = 1
+authors = ["Christophe Hurpeau <christophe@hurpeau.com>"]
+description = "Inline version hints for package manifest files."
+repository = "https://github.com/christophehurpeau/zed-update-versions"
+themes = []
+icon_themes = []
+languages = []
+capabilities = []
+
+[lib]
+kind = "Rust"
+version = "0.7.0"
+
+[language_servers.update-versions-lsp]
+name = "Update Versions LSP"
+languages = [
+  "JSON",
+  "TOML",
+  "Plain Text",
+  "Ruby",
+]

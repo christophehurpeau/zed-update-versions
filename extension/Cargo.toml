@@ -1,0 +1,14 @@
+[package]
+name = "update-versions"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Inline version hints for package manifest files in Zed."
+repository = "https://github.com/christophehurpeau/zed-update-versions"
+authors = ["Christophe Hurpeau <christophe@hurpeau.com>"]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "0.7"

@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── LSP server: format, lint, test ────────────────────────────────────────
+  lsp-server:
+    name: LSP server (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            lsp-server/target
+          key: ${{ runner.os }}-lsp-${{ hashFiles('lsp-server/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-lsp-
+
+      - name: Check formatting
+        working-directory: lsp-server
+        run: cargo fmt --check
+
+      - name: Clippy (deny warnings)
+        working-directory: lsp-server
+        run: cargo clippy -- -D warnings
+
+      - name: Tests
+        working-directory: lsp-server
+        run: cargo test
+
+  # ── WASM extension: format + build check ──────────────────────────────────
+  extension:
+    name: WASM extension
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable + wasm32-wasip1 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            extension/target
+          key: ${{ runner.os }}-ext-${{ hashFiles('extension/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-ext-
+
+      - name: Check formatting
+        working-directory: extension
+        run: cargo fmt --check
+
+      - name: Clippy (wasm32 target, deny warnings)
+        working-directory: extension
+        run: cargo clippy --target wasm32-wasip1 -- -D warnings
+
+      - name: Build (wasm32 target)
+        working-directory: extension
+        run: cargo build --target wasm32-wasip1

@@ -1,0 +1,27 @@
+[package]
+name = "update-versions-lsp"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "LSP server for the zed-update-versions extension."
+repository = "https://github.com/christophehurpeau/zed-update-versions"
+authors = ["Christophe Hurpeau <christophe@hurpeau.com>"]
+
+[[bin]]
+name = "update-versions-lsp"
+path = "src/main.rs"
+
+[dependencies]
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+semver = "1"
+toml = "0.8"
+reqwest = { version = "0.12", features = ["json", "gzip"] }
+async-trait = "0.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
