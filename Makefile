@@ -28,11 +28,18 @@ fmt:
 build-lsp:
 	cargo build --release -p update-versions-lsp
 
-## Build the LSP server and copy the binary into extension/bin/
-## so that the dev extension can find it.
+ZED_WORK_DIR   := $(HOME)/Library/Application Support/Zed/extensions/work/update-versions
+
+## Build the LSP server and copy the binary into extension/bin/ and Zed's work
+## directory so that the dev extension can find it without a GitHub download.
 install-dev: build-lsp
 	mkdir -p $(EXT_BIN_DIR)
 	cp $(LSP_RELEASE) $(EXT_BIN_DIR)/$(LSP_BIN_NAME)
+	@if [ -d "$(ZED_WORK_DIR)" ]; then \
+		mkdir -p "$(ZED_WORK_DIR)/bin"; \
+		cp $(LSP_RELEASE) "$(ZED_WORK_DIR)/bin/$(LSP_BIN_NAME)"; \
+		echo "Binary also installed to Zed work dir"; \
+	fi
 	@echo "Binary installed at $(EXT_BIN_DIR)/$(LSP_BIN_NAME)"
 	@echo "Now open Zed and run: zed: install dev extension → pick extension/"
 
