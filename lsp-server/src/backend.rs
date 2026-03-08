@@ -13,12 +13,16 @@ use crate::config::{ConfigManager, Settings};
 use crate::providers::{DependencyStatus, ParsedDependency, ProviderRegistry, ResolvedDependency};
 use crate::semver_utils;
 
+type LogReloadHandle =
+    tracing_subscriber::reload::Handle<tracing_subscriber::EnvFilter, tracing_subscriber::Registry>;
+
 pub struct Backend {
     client: Client,
     documents: Arc<RwLock<HashMap<Url, String>>>,
     config: Arc<ConfigManager>,
     cache: Arc<VersionCache>,
     providers: Arc<RwLock<ProviderRegistry>>,
+    log_reload_handle: Arc<LogReloadHandle>,
 }
 
 /// Build a fresh [`ProviderRegistry`] from the given settings.
@@ -37,7 +41,7 @@ fn build_providers(settings: &Settings) -> ProviderRegistry {
 }
 
 impl Backend {
-    pub fn new(client: Client) -> Self {
+    pub fn new(client: Client, log_reload_handle: Arc<LogReloadHandle>) -> Self {
         let settings = Settings::default();
         let config = ConfigManager::new();
         let cache_ttl = Duration::from_secs(settings.cache_ttl_secs);
@@ -48,6 +52,7 @@ impl Backend {
             config: Arc::new(config),
             cache: Arc::new(VersionCache::new(cache_ttl)),
             providers: Arc::new(RwLock::new(build_providers(&settings))),
+            log_reload_handle,
         }
     }
 
@@ -333,8 +338,15 @@ impl LanguageServer for Backend {
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
         if let Some(settings_val) = params.settings.get("update-versions") {
             if let Ok(settings) = serde_json::from_value::<Settings>(settings_val.clone()) {
+                // Apply log level to the live tracing subscriber.
+                if let Ok(new_filter) = settings.log_level.parse::<tracing_subscriber::EnvFilter>()
+                {
+                    let _ = self.log_reload_handle.reload(new_filter);
+                }
                 // Rebuild providers so registry URL and dependency keys take effect immediately.
                 *self.providers.write().await = build_providers(&settings);
+                // Update cache TTL without invalidating existing entries.
+                self.cache.update_ttl(settings.cache_ttl_secs);
                 self.config.update_settings(settings).await;
                 // Refresh hints after config change
                 self.client

@@ -49,8 +49,9 @@
   cache (or `Loading` state for uncached deps), spawns background HTTP fetches, then calls
   `inlayHint/refresh` — Zed re-requests hints with real statuses once all fetches complete.
 - [x] **`cache_ttl_secs` setting ignored**: `Backend::new` now reads `cache_ttl_secs` from
-  `Settings::default()` instead of hardcoding 300. Hot-reload of TTL is not supported (requires
-  server restart).
+  `Settings::default()` instead of hardcoding 300. `VersionCache` stores the TTL as an
+  `AtomicU64`; `did_change_configuration` calls `cache.update_ttl()` so changes take effect
+  immediately without a server restart.
 - [x] **Provider settings not hot-reloaded**: `ProviderRegistry` is now stored in an `RwLock`;
   `workspace/didChangeConfiguration` rebuilds providers with the new npm registry URL and
   dependency keys before updating `ConfigManager`, so all subsequent requests use the updated

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, Mutex, RwLock};
 
@@ -19,7 +20,8 @@ struct CacheEntry {
 pub struct VersionCache {
     store: RwLock<HashMap<String, CacheEntry>>,
     inflight: Mutex<HashMap<String, broadcast::Sender<VersionResult>>>,
-    ttl: Duration,
+    /// TTL stored in milliseconds so it can be updated atomically at runtime.
+    ttl_ms: AtomicU64,
 }
 
 impl VersionCache {
@@ -27,15 +29,22 @@ impl VersionCache {
         Self {
             store: RwLock::new(HashMap::new()),
             inflight: Mutex::new(HashMap::new()),
-            ttl,
+            ttl_ms: AtomicU64::new(ttl.as_millis() as u64),
         }
+    }
+
+    /// Update the TTL for future cache lookups (hot-reload support).
+    pub fn update_ttl(&self, secs: u64) {
+        self.ttl_ms
+            .store(secs.saturating_mul(1_000), Ordering::Relaxed);
     }
 
     /// Get a cached entry if it exists and hasn't expired.
     pub async fn get(&self, key: &str) -> Option<VersionResult> {
+        let ttl = Duration::from_millis(self.ttl_ms.load(Ordering::Relaxed));
         let store = self.store.read().await;
         if let Some(entry) = store.get(key) {
-            if entry.inserted_at.elapsed() < self.ttl {
+            if entry.inserted_at.elapsed() < ttl {
                 return Some(entry.result.clone());
             }
         }
@@ -353,5 +362,63 @@ mod tests {
         // timing is tight, but never 5 times)
         let count = call_count.load(Ordering::Relaxed);
         assert!(count <= 2, "Fetcher called {count} times, expected ≤ 2");
+    }
+
+    /// Reducing the TTL via update_ttl should cause previously-valid entries to
+    /// be treated as expired on the next get().
+    #[tokio::test]
+    async fn test_update_ttl_shortens_expiry() {
+        let cache = VersionCache::new(Duration::from_secs(300));
+        cache
+            .set(
+                "npm:react".to_string(),
+                VersionResult {
+                    stable_versions: vec!["18.0.0".to_string()],
+                    prerelease: None,
+                },
+            )
+            .await;
+
+        // Entry is valid with the original long TTL.
+        assert!(cache.get("npm:react").await.is_some());
+
+        // Shrink TTL to 0 — every existing entry is now expired.
+        cache.update_ttl(0);
+        assert!(
+            cache.get("npm:react").await.is_none(),
+            "entry should be expired after TTL reduced to 0"
+        );
+    }
+
+    /// Extending the TTL via update_ttl should keep entries alive that would
+    /// otherwise have expired under the original TTL.
+    #[tokio::test]
+    async fn test_update_ttl_extends_expiry() {
+        // Start with a very short TTL so the entry expires quickly.
+        let cache = VersionCache::new(Duration::from_millis(30));
+        cache
+            .set(
+                "npm:react".to_string(),
+                VersionResult {
+                    stable_versions: vec!["18.0.0".to_string()],
+                    prerelease: None,
+                },
+            )
+            .await;
+
+        // Before expiry the entry is present.
+        assert!(cache.get("npm:react").await.is_some());
+
+        // Extend TTL to a large value before the original 30 ms elapses.
+        cache.update_ttl(300);
+
+        // Wait past the original 30 ms window.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Entry must still be alive because the new TTL is 300 s.
+        assert!(
+            cache.get("npm:react").await.is_some(),
+            "entry should still be valid after TTL was extended"
+        );
     }
 }
