@@ -10,6 +10,8 @@
 [workspace]
 # Never publish to crates.io — binaries are distributed via GitHub Releases.
 publish = false
+# Use git-cliff for changelog generation.
+changelog_config = "cliff.toml"
 
 [[package]]
 name = "update-versions-lsp"
@@ -17,7 +19,6 @@ name = "update-versions-lsp"
 tag_name = "lsp-v{{ version }}"
 # Write changelog entries to the root CHANGELOG.md (LSP drives the history).
 changelog_path = "CHANGELOG.md"
-changelog_config = "cliff.toml"
 
 [[package]]
 name = "update-versions"
