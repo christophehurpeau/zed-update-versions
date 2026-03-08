@@ -211,45 +211,108 @@ mod tests {
         );
     }
 
-    /// When an inflight sender is dropped before recv() returns (e.g. the first
-    /// task panicked), the waiting task must fall through and issue its own fetch.
+    /// After a resolve() completes, the result must be stored so that a second
+    /// sequential resolve() for the same key never calls the fetcher again.
+    #[tokio::test]
+    async fn test_cache_resolve_caches_result() {
+        let cache = VersionCache::new(Duration::from_secs(300));
+        let call_count = Arc::new(AtomicU32::new(0));
+
+        // First call — fetcher runs
+        {
+            let count = call_count.clone();
+            cache
+                .resolve("npm:lodash", || async move {
+                    count.fetch_add(1, Ordering::Relaxed);
+                    VersionResult {
+                        stable_versions: vec!["4.17.21".to_string()],
+                        prerelease: None,
+                    }
+                })
+                .await;
+        }
+        assert_eq!(call_count.load(Ordering::Relaxed), 1);
+
+        // Second call — must return cached entry without calling the fetcher
+        {
+            let count = call_count.clone();
+            let result = cache
+                .resolve("npm:lodash", || async move {
+                    count.fetch_add(1, Ordering::Relaxed);
+                    VersionResult {
+                        stable_versions: vec!["9.9.9".to_string()],
+                        prerelease: None,
+                    }
+                })
+                .await;
+            assert_eq!(
+                result.stable_versions.first().map(String::as_str),
+                Some("4.17.21"),
+                "second call must return the originally cached version"
+            );
+        }
+        assert_eq!(
+            call_count.load(Ordering::Relaxed),
+            1,
+            "fetcher must not be called a second time"
+        );
+    }
+
+    /// When all senders for an in-flight key are dropped before delivering a
+    /// result (e.g. the fetching task panicked), a waiting resolve() must detect
+    /// the closed channel and fall through to issue its own fetch instead of
+    /// hanging forever.
     #[tokio::test]
     async fn test_cache_resolve_fallthrough_on_sender_drop() {
         let cache = Arc::new(VersionCache::new(Duration::from_secs(300)));
         let call_count = Arc::new(AtomicU32::new(0));
 
-        // Manually plant a dead broadcast channel (no receivers kept alive, tx
-        // dropped immediately after insert) to simulate the "sender gone" state.
-        {
-            let (tx, _rx) = broadcast::channel::<VersionResult>(1);
-            cache
-                .inflight
-                .lock()
-                .await
-                .insert("npm:lodash".to_string(), tx);
-            // tx is dropped here — any subsequent subscriber will get RecvError
-        }
+        // Manually plant a live sender in the inflight map, simulating another
+        // task that registered but has not yet delivered a value.
+        let (tx, _) = broadcast::channel::<VersionResult>(1);
+        cache
+            .inflight
+            .lock()
+            .await
+            .insert("npm:lodash".to_string(), tx.clone());
 
+        // Spawn a resolve task — it will find the inflight entry, subscribe to
+        // the channel, and block on rx.recv().
+        let cache2 = cache.clone();
         let count = call_count.clone();
-        let result = cache
-            .resolve("npm:lodash", || async move {
-                count.fetch_add(1, Ordering::Relaxed);
-                VersionResult {
-                    stable_versions: vec!["4.17.21".to_string()],
-                    prerelease: None,
-                }
-            })
-            .await;
+        let handle = tokio::spawn(async move {
+            cache2
+                .resolve("npm:lodash", || async move {
+                    count.fetch_add(1, Ordering::Relaxed);
+                    VersionResult {
+                        stable_versions: vec!["4.17.21".to_string()],
+                        prerelease: None,
+                    }
+                })
+                .await
+        });
 
+        // Yield long enough for the spawned task to subscribe and park on recv().
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        // Drop ALL sender instances: the clone held by the inflight map and the
+        // one held locally.  Once both are gone the broadcast channel is closed
+        // and rx.recv() in the spawned task returns Err(RecvError::Closed).
+        cache.inflight.lock().await.remove("npm:lodash");
+        drop(tx);
+
+        let result = handle.await.unwrap();
         assert_eq!(
             call_count.load(Ordering::Relaxed),
             1,
-            "fetcher must be called when the in-flight sender is gone"
+            "fetcher must be called after the in-flight sender is dropped"
         );
         assert_eq!(
             result.stable_versions.first().map(String::as_str),
             Some("4.17.21")
         );
+        // The result must be cached afterwards so a repeat call is free.
+        assert!(cache.get("npm:lodash").await.is_some());
     }
 
     #[tokio::test]
