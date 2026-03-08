@@ -563,13 +563,14 @@ mod tests {
 
     #[test]
     fn test_classify_dependency_up_to_date() {
+        // Only the base version itself is available — nothing newer, so it's up to date.
         let dep = ParsedDependency {
             name: "react".to_string(),
             version_constraint: "^18.2.0".to_string(),
             version_range: Range::default(),
         };
         let result = VersionResult {
-            stable_versions: vec!["18.3.0".to_string()],
+            stable_versions: vec!["18.2.0".to_string()],
             prerelease: None,
         };
         match classify_dependency(&dep, &result) {

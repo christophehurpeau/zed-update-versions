@@ -185,9 +185,11 @@ pub fn find_update_candidates(constraint: &str, versions: &[String]) -> Option<U
 
         if req.matches(&v) {
             if in_range.as_ref().is_none_or(|best| v > *best) {
-                in_range = Some(v);
+                in_range = Some(v.clone());
             }
-        } else if v > base {
+        }
+
+        if v > base {
             if v.major > base.major {
                 if major.as_ref().is_none_or(|best| v > *best) {
                     major = Some(v);
@@ -388,10 +390,11 @@ mod tests {
 
     #[test]
     fn test_find_update_candidates_in_range_only() {
+        // Versions in-range but newer than base are still reported as patch updates
         let versions = vec!["1.2.5".to_string(), "1.2.3".to_string()];
         let candidates = find_update_candidates("^1.2.0", &versions).unwrap();
         assert_eq!(candidates.in_range, Some("1.2.5".to_string()));
-        assert!(candidates.patch.is_none());
+        assert_eq!(candidates.patch, Some("1.2.5".to_string()));
         assert!(candidates.minor.is_none());
         assert!(candidates.major.is_none());
     }
@@ -409,10 +412,10 @@ mod tests {
     fn test_find_update_candidates_minor() {
         let versions = vec!["1.3.0".to_string(), "1.2.5".to_string()];
         let candidates = find_update_candidates("~1.2.0", &versions).unwrap();
-        // ~1.2.0 is >=1.2.0 <1.3.0 so 1.2.5 is in range, 1.3.0 is a minor update
+        // ~1.2.0 is >=1.2.0 <1.3.0 so 1.2.5 is in range (and a patch update), 1.3.0 is a minor update
         assert_eq!(candidates.in_range, Some("1.2.5".to_string()));
         assert_eq!(candidates.minor, Some("1.3.0".to_string()));
-        assert!(candidates.patch.is_none());
+        assert_eq!(candidates.patch, Some("1.2.5".to_string()));
         assert!(candidates.major.is_none());
     }
 
@@ -423,7 +426,7 @@ mod tests {
         assert_eq!(candidates.in_range, Some("1.2.5".to_string()));
         assert_eq!(candidates.major, Some("2.0.0".to_string()));
         assert!(candidates.minor.is_none());
-        assert!(candidates.patch.is_none());
+        assert_eq!(candidates.patch, Some("1.2.5".to_string()));
     }
 
     #[test]
@@ -438,11 +441,11 @@ mod tests {
             "1.2.1".to_string(),
         ];
         let candidates = find_update_candidates("~1.2.0", &versions).unwrap();
-        // ~1.2.0 is >=1.2.0 <1.3.0; 1.2.2 and 1.2.1 are in range, best is 1.2.2
+        // ~1.2.0 is >=1.2.0 <1.3.0; 1.2.2 and 1.2.1 are in range (and patch updates), best patch is 1.2.2
         assert_eq!(candidates.in_range, Some("1.2.2".to_string()));
         assert_eq!(candidates.minor, Some("1.3.0".to_string()));
         assert_eq!(candidates.major, Some("3.0.0".to_string()));
-        assert!(candidates.patch.is_none());
+        assert_eq!(candidates.patch, Some("1.2.2".to_string()));
     }
 
     #[test]
