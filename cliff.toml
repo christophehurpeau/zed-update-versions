@@ -41,4 +41,4 @@ commit_parsers = [
   { message = "^test",           skip = true },
 ]
 filter_commits = true
-tag_pattern = "lsp-v[0-9].*"
+tag_pattern = "update-versions-lsp-v[0-9].*"
